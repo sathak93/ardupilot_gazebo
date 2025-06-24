@@ -123,6 +123,15 @@
         <always_on>1</always_on>
         <update_rate>10</update_rate>
         <visualize>1</visualize>
+
+        <plugin name="GstCameraPlugin"
+            filename="GstCameraPlugin">
+          <udp_host>127.0.0.1</udp_host>
+          <udp_port>5600</udp_port>
+          <use_basic_pipeline>true</use_basic_pipeline>
+          <use_cuda>false</use_cuda>
+        </plugin>
+
       </sensor>
     </link>
     <joint name='tilt_joint' type='revolute'>
@@ -131,11 +140,11 @@
       <axis>
         <xyz>1 0 0</xyz>
         <dynamics>
-          <damping>0.5</damping>
+          <damping>0.01</damping>
         </dynamics>
         <limit>
-          <lower>-1.57079632</lower>
-          <upper>1.57079632</upper>
+          <lower>-3.1415926</lower>
+          <upper>3.1415926</upper>
         </limit>
       </axis>
       <pose>0 0 0.02 0 0 0</pose>

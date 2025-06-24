@@ -8,7 +8,7 @@ This is the official ArduPilot plugin for [Gazebo](https://gazebosim.org/home).
 It replaces the previous
 [`ardupilot_gazebo`](https://github.com/khancyr/ardupilot_gazebo)
 plugin and provides support for the recent releases of the Gazebo simulator
-[(Gazebo Garden)](https://gazebosim.org/docs/garden/install) and [(Gazebo Harmonic)](https://gazebosim.org/docs/harmonic/install).
+[(Gazebo Garden)](https://gazebosim.org/docs/garden/install), [(Gazebo Harmonic)](https://gazebosim.org/docs/harmonic/install) and [(Gazebo Ionic)](https://gazebosim.org/docs/ionic/install).
 
 It also adds the following features:
 
@@ -24,13 +24,14 @@ The project comprises a Gazebo plugin to connect to ArduPilot SITL
 ## Prerequisites
 
 Gazebo Garden or Harmonic is supported on Ubuntu 22.04 (Jammy).
+Harmonic is recommended.
 If you are running Ubuntu as a virtual machine you will need at least
 Ubuntu 20.04 in order to have the OpenGL support required for the
 `ogre2` render engine. Gazebo and ArduPilot SITL will also run on macOS
 (Big Sur, Monterey and Venturua; Intel and M1 devices).
 
 Follow the instructions for a binary install of
-[Gazebo Garden](https://gazebosim.org/docs/garden/install) or [Gazebo Harmonic](https://gazebosim.org/docs/harmonic/install)
+[Gazebo Garden](https://gazebosim.org/docs/garden/install) or [Gazebo Harmonic](https://gazebosim.org/docs/harmonic/install) or [Gazebo Ionic](https://gazebosim.org/docs/ionic/install)
 and verify that Gazebo is running correctly.
 
 Set up an [ArduPilot development environment](https://ardupilot.org/dev/index.html).
@@ -43,18 +44,39 @@ Install additional dependencies:
 
 ### Ubuntu
 
-Gazebo Garden:
+#### Garden (apt)
+
+Manual - Gazebo Garden Dependencies:
 
 ```bash
 sudo apt update
 sudo apt install libgz-sim7-dev rapidjson-dev
+sudo apt install libopencv-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl
 ```
 
-Or Gazebo Harmonic:
+#### Harmonic (apt)
+
+Manual - Gazebo Harmonic Dependencies:
 
 ```bash
 sudo apt update
 sudo apt install libgz-sim8-dev rapidjson-dev
+sudo apt install libopencv-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-gl
+```
+
+#### Rosdep
+
+Use rosdep with
+[osrf's rosdep rules](https://github.com/osrf/osrf-rosdep?tab=readme-ov-file#1-use-rosdep-to-resolve-gazebo-libraries)
+to manage all dependencies. This is driven off of the environment variable `GZ_VERSION`.
+
+```bash
+export GZ_VERSION=harmonic # or garden or ionic
+sudo bash -c 'wget https://raw.githubusercontent.com/osrf/osrf-rosdep/master/gz/00-gazebo.list -O /etc/ros/rosdep/sources.list.d/00-gazebo.list'
+rosdep update
+rosdep resolve gz-harmonic # or gz-garden or gz-ionic
+# Navigate to your ROS workspace before the next command.
+rosdep install --from-paths src --ignore-src -y
 ```
 
 ### macOS
@@ -62,10 +84,11 @@ sudo apt install libgz-sim8-dev rapidjson-dev
 ```bash
 brew update
 brew install rapidjson
+brew install opencv gstreamer
 ```
 
 Ensure the `GZ_VERSION` environment variable is set to either
-`garden` or `harmonic`.
+`garden` or `harmonic` or `ionic`.
 
 Clone the repo and build:
 
@@ -176,6 +199,79 @@ greater than one:
 ```bash
 MANUAL> param set SIM_SPEEDUP 10
 ```
+
+### 3. Streaming camera video
+
+Images from camera sensors may be streamed with GStreamer using
+the `GstCameraPlugin` sensor plugin. The example gimbal models include the
+plugin element:
+
+```xml
+<plugin name="GstCameraPlugin"
+    filename="GstCameraPlugin">
+  <udp_host>127.0.0.1</udp_host>
+  <udp_port>5600</udp_port>
+  <use_basic_pipeline>true</use_basic_pipeline>
+  <use_cuda>false</use_cuda>
+</plugin>
+```
+
+The `<image_topic>` and `<enable_topic>` parameters are deduced from the
+topic name for the camera sensor, but may be overriden if required.
+
+The `gimbal.sdf` world includes a 3 degrees of freedom gimbal with a
+zoomable camera. To start streaming:
+
+```bash
+gz topic -t /world/gimbal/model/mount/model/gimbal/link/pitch_link/sensor/camera/image/enable_streaming -m gz.msgs.Boolean -p "data: 1"
+```
+
+Display the streamed video:
+
+```bash
+gst-launch-1.0 -v udpsrc port=5600 caps='application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)H264' ! rtph264depay ! avdec_h264 ! videoconvert ! autovideosink sync=false
+```
+
+View the streamed camera frames in [QGC](http://qgroundcontrol.com/):
+
+`Open QGC > Application Settings > Video Settings > Select UDP h.264 Video Stream & use port 5600`
+
+![qgc_video_settings](https://github.com/user-attachments/assets/61fa4c2a-37e2-47cf-abcf-9f110d9c2015)
+
+
+### 4. Using 3d Gimbal
+
+The Iris model is equipped with a 3d gimbal and camera that can be controlled directly in MAVProxy using the RC overrides.
+
+#### Run Gazebo
+
+```bash
+gz sim -v4 -r iris_runway.sdf
+```
+
+#### Run ArduPilot SITL with a specified parameter file
+
+```bash
+cd ardupilot
+
+sim_vehicle.py -D -v ArduCopter -f JSON --add-param-file=$HOME/ardupilot_gazebo/config/gazebo-iris-gimbal.parm --console --map
+```
+
+Control action for gimbal over RC channel:
+
+| Action | Channel | RC Low | RC High |
+| ------------- | ------------- | ------------- | ------------- |
+| Roll | RC6 | Roll Left | Roll Right |
+| Pitch | RC7 | Pitch Down | Pitch Up |
+| Yaw | RC8 | Yaw Left | Yaw Right |
+
+Example usage:
+
+`rc 6 1100` - Gimbal rolls left
+
+`rc 7 1900` - Gimbal pitch upwards
+
+`rc 8 1500` - Gimbal yaw neutral
 
 ## Models
 
