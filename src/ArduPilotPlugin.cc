@@ -22,10 +22,8 @@
 #include <gz/msgs/imu.pb.h>
 #include <gz/msgs/laserscan.pb.h>
 
-#include <algorithm>
 #include <chrono>
 #include <functional>
-#include <memory>
 #include <mutex>
 #include <string>
 #include <sstream>
@@ -41,10 +39,12 @@
 #include <gz/sim/components/JointVelocity.hh>
 #include <gz/sim/components/JointVelocityCmd.hh>
 #include <gz/sim/components/LinearVelocity.hh>
+#include "gz/sim/components/LinearVelocitySeed.hh"
 #include <gz/sim/components/Link.hh>
 #include <gz/sim/components/Name.hh>
 #include <gz/sim/components/Pose.hh>
 #include <gz/sim/components/Sensor.hh>
+#include <gz/sim/components/Wind.hh>
 #include <gz/sim/components/World.hh>
 #include <gz/sim/Model.hh>
 #include <gz/sim/World.hh>
@@ -327,6 +327,10 @@ class gz::sim::systems::ArduPilotPluginPrivate
     anemometerMsg = _msg;
   }
 
+  // Airspeed sensor}
+  public: bool enableAirspeed{false};
+  public: gz::sim::Entity windEntity{gz::sim::kNullEntity};
+
   /// \brief Pointer to an GPS sensor [optional]
   //  public: sensors::GpsSensorPtr gpsSensor;
 
@@ -506,6 +510,9 @@ void gz::sim::systems::ArduPilotPlugin::Configure(
   // Enforce lock-step simulation (has default: false)
   this->dataPtr->isLockStep =
     sdfClone->Get("lock_step", this->dataPtr->isLockStep).first;
+
+  this->dataPtr->enableAirspeed =
+    sdfClone->Get("enable_airspeed", this->dataPtr->enableAirspeed).first;
 
   this->dataPtr->have32Channels =
     sdfClone->Get("have_32_channels", false).first;
@@ -1090,6 +1097,12 @@ void gz::sim::systems::ArduPilotPlugin::PreUpdate(
             _ecm, this->dataPtr->anemometerEntity, true);
 
         this->dataPtr->anemometerInitialized = true;
+    }
+
+    // Initialize airspeed sensor
+    if (this->dataPtr->enableAirspeed)
+    {
+      this->dataPtr->windEntity = _ecm.EntityByComponents(components::Wind());
     }
 
     // This lookup is done in PreUpdate() because in Configure()
@@ -1879,6 +1892,31 @@ void gz::sim::systems::ArduPilotPlugin::CreateStateJSON(
         //       << "\n";
     }
 
+    double indicatedAirspeed{0.0};
+    if (this->dataPtr->enableAirspeed) {
+    
+      gz::math::Vector3d velAircraftWorld = worldLinearVel->Data();
+
+      auto windVelSeed =
+          _ecm.Component<components::WorldLinearVelocitySeed>(this->dataPtr->windEntity);
+
+      math::Vector3d windWorld{windVelSeed->Data().X(),
+                                 windVelSeed->Data().Y(),
+                                 windVelSeed->Data().Z()};
+      
+      // Compute air-relative velocity
+      gz::math::Vector3d airVelWorld = velAircraftWorld - windWorld;
+
+      // Transform air-relative velocity to body frame
+      gz::math::Vector3d airVelBody = wldGToBdyG.Rot().RotateVectorReverse(airVelWorld);
+
+      indicatedAirspeed = airVelBody.X();
+      
+      indicatedAirspeed  = std::max(0.05, indicatedAirspeed); 
+      //gzdbg << "indicatedAirspeed: " << indicatedAirspeed << "\n";
+    
+    }
+
     // build JSON document
     rapidjson::StringBuffer s;
     rapidjson::Writer<rapidjson::StringBuffer> writer(s);
@@ -1958,6 +1996,12 @@ void gz::sim::systems::ArduPilotPlugin::CreateStateJSON(
       default:
           break;
       }
+    }
+
+    // Add airspeed data if available
+    if (this->dataPtr->enableAirspeed) {
+      writer.Key("airspeed");
+      writer.Double(indicatedAirspeed);
     }
 
     // Wind sensor
